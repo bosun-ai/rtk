@@ -36,8 +36,6 @@ quick-xml = "0.37"
 [build-dependencies]
 toml = "0.8"
 
-[dev-dependencies]
-
 [profile.release]
 opt-level = 3
 lto = true

@@ -285,7 +285,17 @@ pub(crate) fn compact_diff(diff: &str, max_lines: usize) -> String {
             if !current_file.is_empty() && (added > 0 || removed > 0) {
                 result.push(format!("  +{} -{}", added, removed));
             }
-            current_file = line.split(" b/").nth(1).unwrap_or("unknown").to_string();
+            current_file = line
+                .split_whitespace()
+                .last()
+                .map(|path| {
+                    path.trim_start_matches("b/")
+                        .trim_start_matches("w/")
+                        .trim_start_matches("a/")
+                        .trim_start_matches("i/")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "unknown".to_string());
             result.push(format!("\n📄 {}", current_file));
             added = 0;
             removed = 0;
@@ -344,53 +354,9 @@ fn run_log(
 ) -> Result<()> {
     let timer = tracking::TimedExecution::start();
 
+    let (command_args, limit, user_set_limit) = build_git_log_command_args(args);
     let mut cmd = git_cmd(global_args);
-    cmd.arg("log");
-
-    // Check if user provided format flags
-    let has_format_flag = args.iter().any(|arg| {
-        arg.starts_with("--oneline") || arg.starts_with("--pretty") || arg.starts_with("--format")
-    });
-
-    // Check if user provided limit flag (-N, -n N, --max-count=N, --max-count N)
-    let has_limit_flag = args.iter().any(|arg| {
-        (arg.starts_with('-') && arg.chars().nth(1).map_or(false, |c| c.is_ascii_digit()))
-            || arg == "-n"
-            || arg.starts_with("--max-count")
-    });
-
-    // Apply RTK defaults only if user didn't specify them
-    if !has_format_flag {
-        cmd.args(["--pretty=format:%h %s (%ar) <%an>"]);
-    }
-
-    // Determine limit: respect user's explicit -N flag, use sensible defaults otherwise
-    let (limit, user_set_limit) = if has_limit_flag {
-        // User explicitly passed -N / -n N / --max-count=N → respect their choice
-        let n = parse_user_limit(args).unwrap_or(10);
-        (n, true)
-    } else if has_format_flag {
-        // --oneline / --pretty without -N: user wants compact output, allow more
-        cmd.arg("-50");
-        (50, false)
-    } else {
-        // No flags at all: default to 10
-        cmd.arg("-10");
-        (10, false)
-    };
-
-    // Only add --no-merges if user didn't explicitly request merge commits
-    let wants_merges = args
-        .iter()
-        .any(|arg| arg == "--merges" || arg == "--min-parents=2");
-    if !wants_merges {
-        cmd.arg("--no-merges");
-    }
-
-    // Pass all user arguments
-    for arg in args {
-        cmd.arg(arg);
-    }
+    cmd.args(command_args.iter().map(String::as_str));
 
     let output = cmd.output().context("Failed to run git log")?;
 
@@ -419,6 +385,58 @@ fn run_log(
     );
 
     Ok(())
+}
+
+pub(crate) fn build_git_log_command(args: &[String]) -> (String, usize, bool) {
+    let (command_args, limit, user_set_limit) = build_git_log_command_args(args);
+    (
+        crate::shell_words::join(command_args.iter().map(String::as_str)),
+        limit,
+        user_set_limit,
+    )
+}
+
+pub(crate) fn render_git_log_output(output: &str, limit: usize, user_set_limit: bool) -> String {
+    filter_log_output(output, limit, user_set_limit)
+}
+
+fn build_git_log_command_args(args: &[String]) -> (Vec<String>, usize, bool) {
+    let mut command = vec!["git".to_string(), "log".to_string()];
+
+    let has_format_flag = args.iter().any(|arg| {
+        arg.starts_with("--oneline") || arg.starts_with("--pretty") || arg.starts_with("--format")
+    });
+
+    let has_limit_flag = args.iter().any(|arg| {
+        (arg.starts_with('-') && arg.chars().nth(1).map_or(false, |c| c.is_ascii_digit()))
+            || arg == "-n"
+            || arg.starts_with("--max-count")
+    });
+
+    if !has_format_flag {
+        command.push("--pretty=format:%h %s (%ar) <%an>".to_string());
+    }
+
+    let (limit, user_set_limit) = if has_limit_flag {
+        (parse_user_limit(args).unwrap_or(10), true)
+    } else if has_format_flag {
+        command.push("-50".to_string());
+        (50, false)
+    } else {
+        command.push("-10".to_string());
+        (10, false)
+    };
+
+    let wants_merges = args
+        .iter()
+        .any(|arg| arg == "--merges" || arg == "--min-parents=2");
+    if !wants_merges {
+        command.push("--no-merges".to_string());
+    }
+
+    command.extend(args.iter().cloned());
+
+    (command, limit, user_set_limit)
 }
 
 /// Filter git log output: truncate long messages, cap lines
@@ -497,7 +515,7 @@ fn truncate_line(line: &str, width: usize) -> String {
 }
 
 /// Format porcelain output into compact RTK status display
-fn format_status_output(porcelain: &str) -> String {
+pub(crate) fn format_status_output(porcelain: &str) -> String {
     let lines: Vec<&str> = porcelain.lines().collect();
 
     if lines.is_empty() {
@@ -593,7 +611,7 @@ fn format_status_output(porcelain: &str) -> String {
 }
 
 /// Minimal filtering for git status with user-provided args
-fn filter_status_with_args(output: &str) -> String {
+pub(crate) fn filter_status_with_args(output: &str) -> String {
     let mut result = Vec::new();
 
     for line in output.lines() {
@@ -1079,7 +1097,7 @@ fn run_branch(args: &[String], verbose: u8, global_args: &[String]) -> Result<()
     Ok(())
 }
 
-fn filter_branch_output(output: &str) -> String {
+pub(crate) fn filter_branch_output(output: &str) -> String {
     let mut current = String::new();
     let mut local: Vec<String> = Vec::new();
     let mut remote: Vec<String> = Vec::new();
@@ -1307,7 +1325,7 @@ fn run_stash(
     Ok(())
 }
 
-fn filter_stash_list(output: &str) -> String {
+pub(crate) fn filter_stash_list(output: &str) -> String {
     // Format: "stash@{0}: WIP on main: abc1234 commit message"
     let mut result = Vec::new();
     for line in output.lines() {
@@ -1392,7 +1410,7 @@ fn run_worktree(args: &[String], verbose: u8, global_args: &[String]) -> Result<
     Ok(())
 }
 
-fn filter_worktree_list(output: &str) -> String {
+pub(crate) fn filter_worktree_list(output: &str) -> String {
     let home = dirs::home_dir()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_default();

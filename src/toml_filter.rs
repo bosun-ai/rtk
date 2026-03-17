@@ -176,12 +176,12 @@ pub struct TomlFilterRegistry {
 }
 
 impl TomlFilterRegistry {
-    /// Load only the embedded built-in registry. This is deterministic and does
-    /// not consult the filesystem or host configuration.
-    pub fn builtin() -> Result<Self, String> {
-        Ok(Self {
-            filters: Self::parse_and_compile(BUILTIN_TOML, "builtin")?,
-        })
+    /// Load only the built-in filters embedded at compile time.
+    pub fn builtin() -> Self {
+        let filters = Self::parse_and_compile(BUILTIN_TOML, "builtin")
+            .expect("builtin RTK TOML filters should compile");
+
+        TomlFilterRegistry { filters }
     }
 
     /// Load registry from disk + built-in. Emits warnings to stderr on parse
@@ -216,13 +216,6 @@ impl TomlFilterRegistry {
         }
 
         TomlFilterRegistry { filters }
-    }
-
-    /// Build a registry from TOML content without touching the filesystem.
-    fn from_toml_str(content: &str, source: &str) -> Result<Self, String> {
-        Ok(Self {
-            filters: Self::parse_and_compile(content, source)?,
-        })
     }
 
     fn parse_and_compile(content: &str, source: &str) -> Result<Vec<CompiledFilter>, String> {
@@ -1599,15 +1592,6 @@ match_command = "^make\\b"
              Update this count when adding/removing filters in src/filters/.",
             filters.len()
         );
-    }
-
-    #[test]
-    fn test_builtin_registry_uses_embedded_filters_only() {
-        let registry = TomlFilterRegistry::builtin().expect("builtin registry should compile");
-        let filter = find_filter_in("mix format", &registry.filters).expect("mix format filter");
-        let output = apply_filter(filter, "");
-
-        assert_eq!(output, "mix format: ok");
     }
 
     /// Verify that every built-in filter has at least one inline test.

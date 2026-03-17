@@ -50,6 +50,7 @@ mod rewrite_cmd;
 mod ruff_cmd;
 mod runner;
 mod summary;
+mod shell_words;
 mod tee;
 mod telemetry;
 mod toml_filter;
@@ -1155,33 +1156,6 @@ enum GtCommands {
     Other(Vec<OsString>),
 }
 
-/// Split a string into shell-like tokens, respecting single and double quotes.
-/// e.g. `git log --format="%H %s"` → ["git", "log", "--format=%H %s"]
-fn shell_split(input: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut chars = input.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            ' ' | '\t' if !in_single && !in_double => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
 fn main() -> Result<()> {
     // Fire-and-forget telemetry ping (1/day, non-blocking)
     telemetry::maybe_ping();
@@ -1977,7 +1951,7 @@ fn main() -> Result<()> {
             // e.g. rtk proxy 'git log --format="%H %s"' → cmd=git, args=["log", "--format=%H %s"]
             let (cmd_name, cmd_args): (String, Vec<String>) = if args.len() == 1 {
                 let full = args[0].to_string_lossy();
-                let parts = shell_split(&full);
+                let parts = shell_words::split(&full);
                 if parts.len() > 1 {
                     (parts[0].clone(), parts[1..].to_vec())
                 } else {
@@ -2401,7 +2375,7 @@ mod tests {
     #[test]
     fn test_shell_split_simple() {
         assert_eq!(
-            shell_split("head -50 file.php"),
+            shell_words::split("head -50 file.php"),
             vec!["head", "-50", "file.php"]
         );
     }
@@ -2409,7 +2383,7 @@ mod tests {
     #[test]
     fn test_shell_split_double_quotes() {
         assert_eq!(
-            shell_split(r#"git log --format="%H %s""#),
+            shell_words::split(r#"git log --format="%H %s""#),
             vec!["git", "log", "--format=%H %s"]
         );
     }
@@ -2417,19 +2391,19 @@ mod tests {
     #[test]
     fn test_shell_split_single_quotes() {
         assert_eq!(
-            shell_split("grep -r 'hello world' ."),
+            shell_words::split("grep -r 'hello world' ."),
             vec!["grep", "-r", "hello world", "."]
         );
     }
 
     #[test]
     fn test_shell_split_single_word() {
-        assert_eq!(shell_split("ls"), vec!["ls"]);
+        assert_eq!(shell_words::split("ls"), vec!["ls"]);
     }
 
     #[test]
     fn test_shell_split_empty() {
-        let result: Vec<String> = shell_split("");
+        let result: Vec<String> = shell_words::split("");
         assert!(result.is_empty());
     }
 

@@ -156,7 +156,7 @@ fn similarity(a: &str, b: &str) -> f64 {
     }
 }
 
-fn condense_unified_diff(diff: &str) -> String {
+pub(crate) fn condense_unified_diff(diff: &str) -> String {
     let mut result = Vec::new();
     let mut current_file = String::new();
     let mut added = 0;

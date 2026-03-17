@@ -164,6 +164,30 @@ fn apply_line_window(
     content.to_string()
 }
 
+pub(crate) fn render_read_output(
+    content: &str,
+    file_name_hint: Option<&str>,
+    level: FilterLevel,
+    max_lines: Option<usize>,
+    tail_lines: Option<usize>,
+    line_numbers: bool,
+) -> String {
+    let lang = file_name_hint
+        .and_then(|name| std::path::Path::new(name).extension().and_then(|e| e.to_str()))
+        .map(Language::from_extension)
+        .unwrap_or(Language::Unknown);
+
+    let filter = filter::get_filter(level);
+    let filtered = filter.filter(content, &lang);
+    let filtered = apply_line_window(&filtered, max_lines, tail_lines, &lang);
+
+    if line_numbers {
+        format_with_line_numbers(&filtered)
+    } else {
+        filtered
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

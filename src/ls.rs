@@ -32,53 +32,12 @@ const NOISE_DIRS: &[&str] = &[
 
 pub fn run(args: &[String], verbose: u8) -> Result<()> {
     let timer = tracking::TimedExecution::start();
-
-    // Separate flags from paths
     let show_all = args
         .iter()
         .any(|a| (a.starts_with('-') && !a.starts_with("--") && a.contains('a')) || a == "--all");
 
-    let flags: Vec<&str> = args
-        .iter()
-        .filter(|a| a.starts_with('-'))
-        .map(|s| s.as_str())
-        .collect();
-    let paths: Vec<&str> = args
-        .iter()
-        .filter(|a| !a.starts_with('-'))
-        .map(|s| s.as_str())
-        .collect();
-
-    // Build ls -la + any extra flags the user passed (e.g. -R)
-    // Strip -l, -a, -h (we handle all of these ourselves)
     let mut cmd = Command::new("ls");
-    cmd.arg("-la");
-    for flag in &flags {
-        if flag.starts_with("--") {
-            // Long flags: skip --all (already handled)
-            if *flag != "--all" {
-                cmd.arg(flag);
-            }
-        } else {
-            let stripped = flag.trim_start_matches('-');
-            let extra: String = stripped
-                .chars()
-                .filter(|c| *c != 'l' && *c != 'a' && *c != 'h')
-                .collect();
-            if !extra.is_empty() {
-                cmd.arg(format!("-{}", extra));
-            }
-        }
-    }
-
-    // Add paths (default to "." if none)
-    if paths.is_empty() {
-        cmd.arg(".");
-    } else {
-        for p in &paths {
-            cmd.arg(p);
-        }
-    }
+    cmd.args(build_ls_command_args(args));
 
     let output = cmd.output().context("Failed to run ls")?;
 
@@ -104,10 +63,14 @@ pub fn run(args: &[String], verbose: u8) -> Result<()> {
         );
     }
 
-    let target_display = if paths.is_empty() {
+    let target_display = if args.iter().all(|arg| arg.starts_with('-')) || args.is_empty() {
         ".".to_string()
     } else {
-        paths.join(" ")
+        args.iter()
+            .filter(|arg| !arg.starts_with('-'))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
     };
     print!("{}", filtered);
     timer.track(
@@ -118,6 +81,58 @@ pub fn run(args: &[String], verbose: u8) -> Result<()> {
     );
 
     Ok(())
+}
+
+pub(crate) fn build_ls_command(args: &[String]) -> String {
+    crate::shell_words::join(
+        build_ls_command_args(args)
+            .iter()
+            .map(String::as_str),
+    )
+}
+
+pub(crate) fn render_ls_output(raw: &str, show_all: bool) -> String {
+    compact_ls(raw, show_all)
+}
+
+fn build_ls_command_args(args: &[String]) -> Vec<String> {
+    let flags: Vec<&str> = args
+        .iter()
+        .filter(|a| a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
+    let paths: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
+
+    let mut command = vec!["ls".to_string(), "-la".to_string()];
+
+    for flag in &flags {
+        if flag.starts_with("--") {
+            if *flag != "--all" {
+                command.push((*flag).to_string());
+            }
+        } else {
+            let stripped = flag.trim_start_matches('-');
+            let extra: String = stripped
+                .chars()
+                .filter(|c| *c != 'l' && *c != 'a' && *c != 'h')
+                .collect();
+            if !extra.is_empty() {
+                command.push(format!("-{}", extra));
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        command.push(".".to_string());
+    } else {
+        command.extend(paths.into_iter().map(str::to_string));
+    }
+
+    command
 }
 
 /// Format bytes into human-readable size

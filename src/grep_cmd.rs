@@ -20,23 +20,9 @@ pub fn run(
         eprintln!("grep: '{}' in {}", pattern, path);
     }
 
-    // Fix: convert BRE alternation \| → | for rg (which uses PCRE-style regex)
-    let rg_pattern = pattern.replace(r"\|", "|");
-
-    let mut rg_cmd = Command::new("rg");
-    rg_cmd.args(["-n", "--no-heading", &rg_pattern, path]);
-
-    if let Some(ft) = file_type {
-        rg_cmd.arg("--type").arg(ft);
-    }
-
-    for arg in extra_args {
-        // Fix: skip grep-ism -r flag (rg is recursive by default; rg -r means --replace)
-        if arg == "-r" || arg == "--recursive" {
-            continue;
-        }
-        rg_cmd.arg(arg);
-    }
+    let rg_command = build_rg_command_args(pattern, path, file_type, extra_args);
+    let mut rg_cmd = Command::new(&rg_command[0]);
+    rg_cmd.args(rg_command.iter().skip(1).map(String::as_str));
 
     let output = rg_cmd
         .output()
@@ -48,32 +34,67 @@ pub fn run(
 
     let raw_output = stdout.to_string();
 
-    if stdout.trim().is_empty() {
-        // Show stderr for errors (bad regex, missing file, etc.)
-        if exit_code == 2 {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.trim().is_empty() {
-                eprintln!("{}", stderr.trim());
-            }
-        }
-        let msg = format!("🔍 0 for '{}'", pattern);
-        println!("{}", msg);
-        timer.track(
-            &format!("grep -rn '{}' {}", pattern, path),
-            "rtk grep",
-            &raw_output,
-            &msg,
-        );
-        if exit_code != 0 {
-            std::process::exit(exit_code);
-        }
-        return Ok(());
+    let rtk_output = render_grep_output(
+        &raw_output,
+        pattern,
+        path,
+        max_line_len,
+        max_results,
+        context_only,
+        output.status.success(),
+    );
+
+    print!("{}", rtk_output);
+    timer.track(
+        &format!("grep -rn '{}' {}", pattern, path),
+        "rtk grep",
+        &raw_output,
+        &rtk_output,
+    );
+
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn build_grep_command(
+    pattern: &str,
+    path: &str,
+    file_type: Option<&str>,
+    extra_args: &[String],
+) -> String {
+    let rg = crate::shell_words::join(
+        build_rg_command_args(pattern, path, file_type, extra_args)
+            .iter()
+            .map(String::as_str),
+    );
+    let grep = crate::shell_words::join(
+        ["grep", "-rn", pattern, path]
+            .into_iter()
+            .chain(extra_args.iter().map(String::as_str)),
+    );
+    format!("if command -v rg >/dev/null 2>&1; then {rg}; else {grep}; fi")
+}
+
+pub(crate) fn render_grep_output(
+    output: &str,
+    pattern: &str,
+    path: &str,
+    max_line_len: usize,
+    max_results: usize,
+    context_only: bool,
+    _succeeded: bool,
+) -> String {
+    if output.trim().is_empty() {
+        return format!("🔍 0 for '{}'", pattern);
     }
 
     let mut by_file: HashMap<String, Vec<(usize, String)>> = HashMap::new();
     let mut total = 0;
 
-    for line in stdout.lines() {
+    for line in output.lines() {
         let parts: Vec<&str> = line.splitn(3, ':').collect();
 
         let (file, line_num, content) = if parts.len() == 3 {
@@ -91,12 +112,12 @@ pub fn run(
         by_file.entry(file).or_default().push((line_num, cleaned));
     }
 
-    let mut rtk_output = String::new();
-    rtk_output.push_str(&format!("🔍 {} in {}F:\n\n", total, by_file.len()));
+    let mut rendered = String::new();
+    rendered.push_str(&format!("🔍 {} in {}F:\n\n", total, by_file.len()));
 
     let mut shown = 0;
     let mut files: Vec<_> = by_file.iter().collect();
-    files.sort_by_key(|(f, _)| *f);
+    files.sort_by_key(|(file, _)| *file);
 
     for (file, matches) in files {
         if shown >= max_results {
@@ -104,10 +125,10 @@ pub fn run(
         }
 
         let file_display = compact_path(file);
-        rtk_output.push_str(&format!("📄 {} ({}):\n", file_display, matches.len()));
+        rendered.push_str(&format!("📄 {} ({}):\n", file_display, matches.len()));
 
         for (line_num, content) in matches.iter().take(10) {
-            rtk_output.push_str(&format!("  {:>4}: {}\n", line_num, content));
+            rendered.push_str(&format!("  {:>4}: {}\n", line_num, content));
             shown += 1;
             if shown >= max_results {
                 break;
@@ -115,28 +136,46 @@ pub fn run(
         }
 
         if matches.len() > 10 {
-            rtk_output.push_str(&format!("  +{}\n", matches.len() - 10));
+            rendered.push_str(&format!("  +{}\n", matches.len() - 10));
         }
-        rtk_output.push('\n');
+        rendered.push('\n');
     }
 
     if total > shown {
-        rtk_output.push_str(&format!("... +{}\n", total - shown));
+        rendered.push_str(&format!("... +{}\n", total - shown));
     }
 
-    print!("{}", rtk_output);
-    timer.track(
-        &format!("grep -rn '{}' {}", pattern, path),
-        "rtk grep",
-        &raw_output,
-        &rtk_output,
-    );
+    rendered
+}
 
-    if exit_code != 0 {
-        std::process::exit(exit_code);
+fn build_rg_command_args(
+    pattern: &str,
+    path: &str,
+    file_type: Option<&str>,
+    extra_args: &[String],
+) -> Vec<String> {
+    let rg_pattern = pattern.replace(r"\|", "|");
+    let mut command = vec![
+        "rg".to_string(),
+        "-n".to_string(),
+        "--no-heading".to_string(),
+        rg_pattern,
+        path.to_string(),
+    ];
+
+    if let Some(file_type) = file_type {
+        command.push("--type".to_string());
+        command.push(file_type.to_string());
     }
 
-    Ok(())
+    for arg in extra_args {
+        if arg == "-r" || arg == "--recursive" {
+            continue;
+        }
+        command.push(arg.clone());
+    }
+
+    command
 }
 
 fn clean_line(line: &str, max_len: usize, context_only: bool, pattern: &str) -> String {

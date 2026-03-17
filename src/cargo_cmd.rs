@@ -150,7 +150,7 @@ fn format_crate_info(name: &str, version: &str, fallback: &str) -> String {
 }
 
 /// Filter cargo install output - strip dep compilation, keep installed/replaced/errors
-fn filter_cargo_install(output: &str) -> String {
+pub(crate) fn filter_cargo_install(output: &str) -> String {
     let mut errors: Vec<String> = Vec::new();
     let mut error_count = 0;
     let mut compiled = 0;
@@ -556,7 +556,7 @@ fn filter_cargo_nextest(output: &str) -> String {
 }
 
 /// Filter cargo build/check output - strip "Compiling"/"Checking" lines, keep errors + summary
-fn filter_cargo_build(output: &str) -> String {
+pub(crate) fn filter_cargo_build(output: &str) -> String {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings = 0;
     let mut error_count = 0;
@@ -745,7 +745,7 @@ impl AggregatedTestResult {
 }
 
 /// Filter cargo test output - show failures + summary only
-fn filter_cargo_test(output: &str) -> String {
+pub(crate) fn filter_cargo_test(output: &str) -> String {
     let mut failures: Vec<String> = Vec::new();
     let mut summary_lines: Vec<String> = Vec::new();
     let mut in_failure_section = false;
@@ -863,7 +863,7 @@ fn filter_cargo_test(output: &str) -> String {
 }
 
 /// Filter cargo clippy output - group warnings by lint rule
-fn filter_cargo_clippy(output: &str) -> String {
+pub(crate) fn filter_cargo_clippy(output: &str) -> String {
     let mut by_rule: HashMap<String, Vec<String>> = HashMap::new();
     let mut error_count = 0;
     let mut warning_count = 0;

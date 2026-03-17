@@ -1028,10 +1028,9 @@ pub fn estimate_tokens(text: &str) -> usize {
 /// use rtk::tracking::TimedExecution;
 ///
 /// let timer = TimedExecution::start();
-/// let input = execute_standard_command()?;
-/// let output = execute_rtk_command()?;
+/// let input = "long output...";
+/// let output = "short output";
 /// timer.track("ls -la", "rtk ls", &input, &output);
-/// # Ok::<(), anyhow::Error>(())
 /// ```
 pub struct TimedExecution {
     start: Instant,

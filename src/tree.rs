@@ -102,7 +102,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<()> {
     Ok(())
 }
 
-fn filter_tree_output(raw: &str) -> String {
+pub(crate) fn filter_tree_output(raw: &str) -> String {
     let lines: Vec<&str> = raw.lines().collect();
 
     if lines.is_empty() {
